@@ -34,23 +34,33 @@ export fn main(): Unit => {
     let mut recordedStatus = 200;
     let mut recordedHeaders: Any = {};
 
-    {
+    let mut resObj: Any = {
       statusCode: 200,
-      headers: recordedHeaders,
-      setHeader: fn(k: String, v: String): Unit => {
-        recordedHeaders[k] = v;
-      },
-      writeHead: fn(st: Int): Unit => {
-        recordedStatus = st;
-      },
-      end: fn(dt: Any): Unit => {
-        if dt != null && dt != undefined {
-          recordedData = `${dt}`;
-        }
-      },
-      getStatus: fn(): Int => recordedStatus,
-      getBody: fn(): String => recordedData
-    }
+      headers: recordedHeaders
+    };
+
+    resObj.setHeader = fn(k: String, v: String): Unit => {
+      recordedHeaders[k] = v;
+    };
+    resObj.writeHead = fn(st: Int): Unit => {
+      recordedStatus = st;
+      resObj.statusCode = st;
+    };
+    resObj.end = fn(dt: Any): Unit => {
+      if dt != null && dt != undefined {
+        recordedData = `${dt}`;
+      }
+    };
+    resObj.getStatus = fn(): Int => {
+      if resObj.statusCode != 200 {
+        resObj.statusCode
+      } else {
+        recordedStatus
+      }
+    };
+    resObj.getBody = fn(): String => recordedData;
+
+    resObj
   };
 
   // Helper factory for mock requests

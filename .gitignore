@@ -3,7 +3,8 @@ bin/
 dist/
 *.o
 *.a
-*.tmp.mjs
+*.mjs
+*.map
 onion-gin-server
 
 # System files
