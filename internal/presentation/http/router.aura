@@ -1,0 +1,115 @@
+// ==============================================================================
+// Presentation Layer: HTTP Router & Route Aggregator
+// router.aura - Gin Engine Configuration, Middleware Stack & Route Registration
+// ==============================================================================
+
+import { Engine, Default } from "../../../../gin/engine";
+import { GinContext } from "../../../../gin/context";
+import { BasicAuth } from "../../../../gin/auth";
+import { CORS } from "../../../../gin/cors";
+import { AppConfig } from "../../infrastructure/config/config";
+import { OrderHttpHandler } from "./order_handler";
+import { ProductHttpHandler } from "./product_handler";
+import { SystemHttpHandler } from "./system_handler";
+
+export fn SetupRouter(
+  orderHandler: OrderHttpHandler,
+  productHandler: ProductHttpHandler,
+  systemHandler: SystemHttpHandler,
+  config: AppConfig
+): *Engine => {
+  let mut r = Default();
+
+  // Global Cross-Origin Resource Sharing (CORS) Middleware
+  r.Use(CORS());
+
+  // Root & Health Check Endpoints
+  r.GET("/", fn(c: GinContext): Unit => {
+    c.JSON(StatusOK, {
+      service: config.serviceName,
+      version: config.version,
+      status: "running",
+      documentation: "/api/v1",
+      endpoints: [
+        "GET /health",
+        "GET /api/v1/stream",
+        "GET /api/v1/products",
+        "GET /api/v1/products/:id",
+        "POST /api/v1/orders",
+        "GET /api/v1/orders",
+        "GET /api/v1/orders/:id",
+        "POST /api/v1/orders/:id/confirm",
+        "POST /api/v1/orders/:id/cancel",
+        "POST /admin/products (BasicAuth)",
+        "POST /admin/products/:id/restock (BasicAuth)",
+        "GET /admin/audit (BasicAuth)"
+      ]
+    });
+  });
+
+  r.GET("/health", fn(c: GinContext): Unit => {
+    systemHandler.HandleHealth(c);
+  });
+
+  // Public API Group v1
+  let mut api = r.Group("/api/v1");
+
+  // Real-time Event Stream (Server-Sent Events) via CSP Channels
+  api.GET("/stream", fn(c: GinContext): Unit => {
+    systemHandler.HandleLiveStream(c);
+  });
+
+  // Product Catalog Endpoints (Public)
+  api.GET("/products", fn(c: GinContext): Unit => {
+    productHandler.HandleListProducts(c);
+  });
+  api.GET("/products/:id", fn(c: GinContext): Unit => {
+    productHandler.HandleGetProduct(c);
+  });
+
+  // Order Fulfillment Endpoints (Public)
+  api.POST("/orders", fn(c: GinContext): Unit => {
+    orderHandler.HandleCreateOrder(c);
+  });
+  api.GET("/orders", fn(c: GinContext): Unit => {
+    orderHandler.HandleListOrders(c);
+  });
+  api.GET("/orders/:id", fn(c: GinContext): Unit => {
+    orderHandler.HandleGetOrder(c);
+  });
+  api.POST("/orders/:id/confirm", fn(c: GinContext): Unit => {
+    orderHandler.HandleConfirmOrder(c);
+  });
+  api.POST("/orders/:id/cancel", fn(c: GinContext): Unit => {
+    orderHandler.HandleCancelOrder(c);
+  });
+
+  // Protected Admin Group (HTTP Basic Authentication)
+  let mut adminAccounts: Any = {};
+  adminAccounts[config.adminUser] = config.adminPass;
+
+  let mut admin = r.Group("/admin");
+  admin.Use(BasicAuth(adminAccounts));
+
+  admin.POST("/products", fn(c: GinContext): Unit => {
+    productHandler.HandleCreateProduct(c);
+  });
+  admin.POST("/products/:id/restock", fn(c: GinContext): Unit => {
+    productHandler.HandleRestockProduct(c);
+  });
+  admin.GET("/audit", fn(c: GinContext): Unit => {
+    systemHandler.HandleAudit(c);
+  });
+
+  // Custom 404 Not Found Handler
+  r.NoRoute([
+    fn(c: GinContext): Unit => {
+      c.JSON(StatusNotFound, {
+        status: "error",
+        message: "Endpoint not found on Onion-Gin server"
+      });
+    }
+  ]);
+
+  r
+}

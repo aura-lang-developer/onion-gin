@@ -1,0 +1,167 @@
+// ==============================================================================
+// Presentation Layer: HTTP Order Handler (Gin for Aura)
+// order_handler.aura - Handles HTTP Requests via GinContext & Dispatches to UseCase
+// ==============================================================================
+
+import { GinContext } from "../../../../gin/context";
+import { ValidateSchema, FieldRule } from "../../../../gin/binding";
+import { OrderUseCase } from "../../application/services/order_service";
+import { CreateOrderRequestDTO, OrderItemInputDTO, ToOrderResponseDTO, OrderResponseDTO } from "../../application/dto/order_dto";
+import { Order } from "../../domain/model/order";
+
+export struct OrderHttpHandler {
+  useCase: OrderUseCase
+};
+
+export fn NewOrderHttpHandler(useCase: OrderUseCase): OrderHttpHandler => {
+  { useCase: useCase }
+}
+
+let orderItemRules: []FieldRule = [
+  { field: "customerId", rule: "required" }
+];
+
+// POST /api/v1/orders - Creates a new customer order
+fn (h: OrderHttpHandler) HandleCreateOrder(c: GinContext): Unit => {
+  let bindRes = c.BindJSON();
+  match bindRes {
+    Ok(body) => {
+      let valRes = ValidateSchema(body, orderItemRules);
+      match valRes {
+        Ok(_) => {
+          let customerId = `${body.customerId}`;
+          let isVip = if body.isVip != null && body.isVip != undefined && body.isVip == true { true } else { false };
+
+          let mut itemsList: []OrderItemInputDTO = [];
+          if body.items != null && body.items != undefined {
+            for rawItem in body.items {
+              if rawItem.productId != null && rawItem.quantity != null {
+                let pId = `${rawItem.productId}`;
+                let qty = parseInt(`${rawItem.quantity}`, 10);
+                let itemDto: OrderItemInputDTO = { productId: pId, quantity: qty };
+                itemsList = append(itemsList, itemDto);
+              }
+            }
+          }
+
+          let reqDto: CreateOrderRequestDTO = {
+            customerId: customerId,
+            isVip: isVip,
+            items: itemsList
+          };
+
+          let createRes = h.useCase.CreateOrder(reqDto);
+          match createRes {
+            Ok(ord) => {
+              c.JSON(StatusCreated, {
+                status: "success",
+                message: "Order placed successfully",
+                order: ToOrderResponseDTO(ord)
+              });
+            },
+            Err(err) => {
+              c.JSON(StatusBadRequest, {
+                status: "error",
+                message: err
+              });
+            }
+          };
+        },
+        Err(valErr) => {
+          c.JSON(StatusBadRequest, {
+            status: "error",
+            message: "Validation failure",
+            details: valErr
+          });
+        }
+      };
+    },
+    Err(e) => {
+      c.JSON(StatusBadRequest, {
+        status: "error",
+        message: "Malformed JSON payload",
+        details: e
+      });
+    }
+  };
+}
+
+// GET /api/v1/orders/:id - Retrieves order by ID
+fn (h: OrderHttpHandler) HandleGetOrder(c: GinContext): Unit => {
+  let id = c.Param("id");
+  let res = h.useCase.GetOrder(id);
+  match res {
+    Ok(ord) => {
+      c.JSON(StatusOK, ToOrderResponseDTO(ord));
+    },
+    Err(err) => {
+      c.JSON(StatusNotFound, {
+        status: "error",
+        message: err,
+        id: id
+      });
+    }
+  };
+}
+
+// GET /api/v1/orders - Lists all orders with optional status filter
+fn (h: OrderHttpHandler) HandleListOrders(c: GinContext): Unit => {
+  let statusFilter = c.Query("status");
+  let allOrders = h.useCase.ListOrders();
+
+  let mut filtered: []OrderResponseDTO = [];
+  for ord in allOrders {
+    if statusFilter == "" || ord.status == statusFilter {
+      filtered = append(filtered, ToOrderResponseDTO(ord));
+    }
+  }
+
+  c.JSON(StatusOK, {
+    total: len(filtered),
+    statusFilter: statusFilter,
+    orders: filtered
+  });
+}
+
+// POST /api/v1/orders/:id/confirm - Confirms an order
+fn (h: OrderHttpHandler) HandleConfirmOrder(c: GinContext): Unit => {
+  let id = c.Param("id");
+  let res = h.useCase.ConfirmOrder(id);
+  match res {
+    Ok(ord) => {
+      c.JSON(StatusOK, {
+        status: "success",
+        message: "Order successfully confirmed",
+        order: ToOrderResponseDTO(ord)
+      });
+    },
+    Err(err) => {
+      c.JSON(StatusBadRequest, {
+        status: "error",
+        message: err
+      });
+    }
+  };
+}
+
+// POST /api/v1/orders/:id/cancel - Cancels an order and restocks inventory
+fn (h: OrderHttpHandler) HandleCancelOrder(c: GinContext): Unit => {
+  let id = c.Param("id");
+  let reason = c.DefaultQuery("reason", "Customer requested cancellation");
+  let res = h.useCase.CancelOrder(id, reason);
+  match res {
+    Ok(ord) => {
+      c.JSON(StatusOK, {
+        status: "success",
+        message: "Order successfully cancelled and inventory restored",
+        order: ToOrderResponseDTO(ord)
+      });
+    },
+    Err(err) => {
+      c.JSON(StatusBadRequest, {
+        status: "error",
+        message: err
+      });
+    }
+  };
+}

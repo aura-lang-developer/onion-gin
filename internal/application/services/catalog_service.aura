@@ -1,0 +1,84 @@
+// ==============================================================================
+// Application Layer: Catalog & Inventory Use Case
+// catalog_service.aura - Manages Product Catalog, Availability & Stock Influx
+// ==============================================================================
+
+import { Product, NewProduct } from "../../domain/model/product";
+import { ErrProductNotFound } from "../../domain/errors";
+
+export struct CatalogUseCase {
+  productRepo: Any
+};
+
+export fn NewCatalogUseCase(productRepo: Any): CatalogUseCase => {
+  { productRepo: productRepo }
+}
+
+let mut prodSeq: Int = 1000;
+
+// Creates a new product in the catalog
+fn (uc: CatalogUseCase) CreateProduct(sku: String, name: String, price: Float, stock: Int): Result<Product, String> => {
+  let existing: Option<Product> = uc.productRepo.FindBySku(sku);
+  match existing {
+    Some(p) => {
+      Err(`Product with SKU '${sku}' already exists (ID: ${p.id})`)
+    },
+    None => {
+      prodSeq += 1;
+      let id = `prod_${time.now()}_${prodSeq}`;
+      let prodRes = NewProduct(id, sku, name, price, stock);
+      match prodRes {
+        Ok(p) => {
+          let saveRes = uc.productRepo.Save(p);
+          match saveRes {
+            Ok(_) => Ok(p),
+            Err(e) => Err(e)
+          }
+        },
+        Err(e) => Err(e)
+      }
+    }
+  }
+}
+
+// Retrieves product by ID
+fn (uc: CatalogUseCase) GetProduct(id: String): Result<Product, String> => {
+  let opt: Option<Product> = uc.productRepo.FindById(id);
+  match opt {
+    Some(p) => Ok(p),
+    None => Err(`${ErrProductNotFound()}: ID '${id}'`)
+  }
+}
+
+// Retrieves product by SKU
+fn (uc: CatalogUseCase) GetProductBySku(sku: String): Result<Product, String> => {
+  let opt: Option<Product> = uc.productRepo.FindBySku(sku);
+  match opt {
+    Some(p) => Ok(p),
+    None => Err(`${ErrProductNotFound()}: SKU '${sku}'`)
+  }
+}
+
+// Lists all active products
+fn (uc: CatalogUseCase) ListProducts(): []Product => {
+  uc.productRepo.FindAll()
+}
+
+// Restocks product inventory
+fn (uc: CatalogUseCase) RestockProduct(id: String, quantity: Int): Result<Product, String> => {
+  let opt: Option<Product> = uc.productRepo.FindById(id);
+  match opt {
+    Some(p) => {
+      let mut prod = p;
+      let restockRes = prod.Restock(quantity);
+      match restockRes {
+        Ok(_) => {
+          uc.productRepo.Update(prod);
+          Ok(prod)
+        },
+        Err(e) => Err(e)
+      }
+    },
+    None => Err(`${ErrProductNotFound()}: ID '${id}'`)
+  }
+}

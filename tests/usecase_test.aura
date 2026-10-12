@@ -1,0 +1,332 @@
+// ==============================================================================
+// Unit Test Suite: Application Layer (Use Cases)
+// tests/usecase_test.aura - Tests Application Services, Orchestration & Port Interactions
+// ==============================================================================
+
+import { NewInMemoryOrderRepository } from "../internal/infrastructure/persistence/inmemory_order_repo";
+import { NewInMemoryProductRepository } from "../internal/infrastructure/persistence/inmemory_product_repo";
+import { NewCSPEventBus } from "../internal/infrastructure/messaging/csp_event_bus";
+import { NewEmailNotifier } from "../internal/infrastructure/external/email_notifier";
+import { NewPricingService } from "../internal/domain/service/pricing_service";
+import { NewOrderUseCase } from "../internal/application/services/order_service";
+import { NewCatalogUseCase } from "../internal/application/services/catalog_service";
+import { CreateOrderRequestDTO, OrderItemInputDTO } from "../internal/application/dto/order_dto";
+import { ErrInsufficientStock, ErrProductNotFound, ErrOrderNotFound } from "../internal/domain/errors";
+import { EventOrderCreated, EventOrderConfirmed, EventOrderCancelled } from "../internal/domain/events";
+import { OrderStatusPending, OrderStatusConfirmed, OrderStatusCancelled } from "../internal/domain/model/order";
+
+export fn main(): Unit => {
+  let mut passed = 0;
+  let mut failed = 0;
+
+  println("================================================================================");
+  println("  🧅 ONION ARCHITECTURE - APPLICATION LAYER USE CASE TESTS");
+  println("================================================================================");
+
+  // Initialize In-Memory Infrastructure Adapters
+  let mut orderRepo = NewInMemoryOrderRepository();
+  let mut productRepo = NewInMemoryProductRepository();
+  let mut eventBus = NewCSPEventBus();
+  let mut notifier = NewEmailNotifier();
+  let pricingService = NewPricingService(0.10, 0.15); // 10% VAT, 15% VIP discount
+
+  // Application Use Cases
+  let orderUseCase = NewOrderUseCase(
+    &orderRepo,
+    &productRepo,
+    pricingService,
+    &notifier,
+    &eventBus
+  );
+  let catalogUseCase = NewCatalogUseCase(&productRepo);
+
+  // ----------------------------------------------------------------------------
+  // 1. Catalog Use Case Tests
+  // ----------------------------------------------------------------------------
+  println("\n--- [Catalog Use Case] ---");
+
+  // List products
+  let initialProducts = catalogUseCase.ListProducts();
+  if len(initialProducts) == 4 {
+    println("  ✓ PASS: CatalogUseCase pre-seeded with 4 products");
+    passed += 1;
+  } else {
+    println(`  ✕ FAIL: Expected 4 products, got ${len(initialProducts)}`);
+    failed += 1;
+  };
+
+  // Get product by ID
+  let getProdRes = catalogUseCase.GetProduct("prod_001");
+  match getProdRes {
+    Ok(p) => {
+      if p.sku == "AURA-BOOK-01" && p.stock == 50 {
+        println("  ✓ PASS: Retrieved product 'prod_001' with stock 50");
+        passed += 1;
+      } else {
+        println(`  ✕ FAIL: Unexpected product details: ${p.sku}, stock: ${p.stock}`);
+        failed += 1;
+      }
+    },
+    Err(e) => {
+      println(`  ✕ FAIL: GetProduct failed: ${e}`);
+      failed += 1;
+    }
+  };
+
+  // Create new product
+  let newProdRes = catalogUseCase.CreateProduct("SKU-DOCK-HUB", "USB-C Multiport Docking Station", 89.00, 30);
+  match newProdRes {
+    Ok(p) => {
+      if p.sku == "SKU-DOCK-HUB" && p.stock == 30 {
+        println("  ✓ PASS: Created new product 'SKU-DOCK-HUB'");
+        passed += 1;
+      } else {
+        println("  ✕ FAIL: Created product mismatch");
+        failed += 1;
+      }
+    },
+    Err(e) => {
+      println(`  ✕ FAIL: CreateProduct failed: ${e}`);
+      failed += 1;
+    }
+  };
+
+  // ----------------------------------------------------------------------------
+  // 2. Order Placement & Inventory Reservation
+  // ----------------------------------------------------------------------------
+  println("\n--- [Order Placement & Inventory Reservation] ---");
+
+  let orderReq: CreateOrderRequestDTO = {
+    customerId: "cust_101",
+    isVip: false,
+    items: [
+      { productId: "prod_001", quantity: 2 },
+      { productId: "prod_002", quantity: 1 }
+    ]
+  };
+
+  let createRes = orderUseCase.CreateOrder(orderReq);
+  let mut createdOrderId = "";
+
+  match createRes {
+    Ok(ord) => {
+      createdOrderId = ord.id;
+      if ord.status == OrderStatusPending() && len(ord.items) == 2 {
+        println(`  ✓ PASS: Order '${ord.id}' created successfully with 2 items`);
+        passed += 1;
+      } else {
+        println(`  ✕ FAIL: Order status or items mismatch: ${ord.status}`);
+        failed += 1;
+      };
+
+      // Verify stock was reduced in ProductRepository
+      let p1Opt = productRepo.FindById("prod_001");
+      match p1Opt {
+        Some(p1) => {
+          if p1.stock == 48 {
+            println("  ✓ PASS: Stock for prod_001 decremented from 50 to 48");
+            passed += 1;
+          } else {
+            println(`  ✕ FAIL: Expected stock 48, got ${p1.stock}`);
+            failed += 1;
+          }
+        },
+        None => {
+          println("  ✕ FAIL: prod_001 not found");
+          failed += 1;
+        }
+      };
+
+      // Verify email notification sent via INotificationService port
+      let sentEmails = notifier.GetSentEmails();
+      if len(sentEmails) >= 1 {
+        println(`  ✓ PASS: Email notification recorded: ${sentEmails[0].subject}`);
+        passed += 1;
+      } else {
+        println("  ✕ FAIL: No email notification recorded");
+        failed += 1;
+      };
+
+      // Verify domain event published via IEventPublisher port
+      let eventHistory = eventBus.GetHistory();
+      if len(eventHistory) >= 1 && eventHistory[0].eventType == EventOrderCreated() {
+        println(`  ✓ PASS: Event '${eventHistory[0].eventType}' published to CSPEventBus`);
+        passed += 1;
+      } else {
+        println("  ✕ FAIL: No domain event recorded on event bus");
+        failed += 1;
+      };
+    },
+    Err(e) => {
+      println(`  ✕ FAIL: CreateOrder failed: ${e}`);
+      failed += 1;
+    }
+  };
+
+  // ----------------------------------------------------------------------------
+  // 3. VIP Order & Discount Verification
+  // ----------------------------------------------------------------------------
+  println("\n--- [VIP Customer Order & Discount Verification] ---");
+
+  let vipReq: CreateOrderRequestDTO = {
+    customerId: "cust_vip_99",
+    isVip: true,
+    items: [
+      { productId: "prod_001", quantity: 1 } // price 39.99
+    ]
+  };
+
+  let vipOrderRes = orderUseCase.CreateOrder(vipReq);
+  match vipOrderRes {
+    Ok(vipOrd) => {
+      if vipOrd.discount > 0.0 {
+        println(`  ✓ PASS: VIP customer received discount: $${vipOrd.discount}`);
+        passed += 1;
+      } else {
+        println("  ✕ FAIL: VIP discount was not applied");
+        failed += 1;
+      }
+    },
+    Err(e) => {
+      println(`  ✕ FAIL: VIP CreateOrder failed: ${e}`);
+      failed += 1;
+    }
+  };
+
+  // ----------------------------------------------------------------------------
+  // 4. Insufficient Stock Invariant Rejection
+  // ----------------------------------------------------------------------------
+  println("\n--- [Insufficient Stock Invariant Rejection] ---");
+
+  let overReq: CreateOrderRequestDTO = {
+    customerId: "cust_300",
+    isVip: false,
+    items: [
+      { productId: "prod_003", quantity: 100 } // only 8 in stock
+    ]
+  };
+
+  let overRes = orderUseCase.CreateOrder(overReq);
+  match overRes {
+    Ok(_) => {
+      println("  ✕ FAIL: Order should have failed due to insufficient stock");
+      failed += 1;
+    },
+    Err(e) => {
+      if e.startsWith(ErrInsufficientStock()) {
+        println("  ✓ PASS: Order rejected with ErrInsufficientStock");
+        passed += 1;
+      } else {
+        println(`  ✕ FAIL: Unexpected error message: ${e}`);
+        failed += 1;
+      }
+    }
+  };
+
+  // ----------------------------------------------------------------------------
+  // 5. Order Confirmation Lifecycle
+  // ----------------------------------------------------------------------------
+  println("\n--- [Order Confirmation Lifecycle] ---");
+
+  if createdOrderId != "" {
+    let confRes = orderUseCase.ConfirmOrder(createdOrderId);
+    match confRes {
+      Ok(confirmedOrd) => {
+        if confirmedOrd.status == OrderStatusConfirmed() {
+          println(`  ✓ PASS: Order '${createdOrderId}' confirmed successfully`);
+          passed += 1;
+        } else {
+          println(`  ✕ FAIL: Expected status 'confirmed', got '${confirmedOrd.status}'`);
+          failed += 1;
+        }
+      },
+      Err(e) => {
+        println(`  ✕ FAIL: ConfirmOrder failed: ${e}`);
+        failed += 1;
+      }
+    };
+  } else {
+    println("  ✕ FAIL: createdOrderId was empty");
+    failed += 1;
+  };
+
+  // ----------------------------------------------------------------------------
+  // 6. Order Cancellation & Automatic Inventory Restoration
+  // ----------------------------------------------------------------------------
+  println("\n--- [Order Cancellation & Inventory Restock] ---");
+
+  // Create a pending order specifically to cancel
+  let cancelTestReq: CreateOrderRequestDTO = {
+    customerId: "cust_cancel_tester",
+    isVip: false,
+    items: [
+      { productId: "prod_004", quantity: 5 } // Stock: 25 -> 20 -> restored to 25
+    ]
+  };
+
+  let toCancelRes = orderUseCase.CreateOrder(cancelTestReq);
+  match toCancelRes {
+    Ok(ordToCancel) => {
+      // Stock should now be 20
+      let p4Mid = productRepo.FindById("prod_004");
+      match p4Mid {
+        Some(p) => {
+          if p.stock == 20 {
+            println("  ✓ PASS: prod_004 stock reserved to 20 before cancellation");
+            passed += 1;
+          } else {
+            println(`  ✕ FAIL: Expected stock 20, got ${p.stock}`);
+            failed += 1;
+          }
+        },
+        None => ()
+      };
+
+      // Cancel the order
+      let cancelRes = orderUseCase.CancelOrder(ordToCancel.id, "Customer changed their mind");
+      match cancelRes {
+        Ok(cancelledOrd) => {
+          if cancelledOrd.status == OrderStatusCancelled() {
+            println("  ✓ PASS: Order transitioned to cancelled");
+            passed += 1;
+          } else {
+            println(`  ✕ FAIL: Status is ${cancelledOrd.status}`);
+            failed += 1;
+          };
+
+          // Verify stock restored back to 25 in product repository
+          let p4After = productRepo.FindById("prod_004");
+          match p4After {
+            Some(p) => {
+              if p.stock == 25 {
+                println("  ✓ PASS: prod_004 stock restored back to 25 units");
+                passed += 1;
+              } else {
+                println(`  ✕ FAIL: Expected restored stock 25, got ${p.stock}`);
+                failed += 1;
+              }
+            },
+            None => ()
+          };
+        },
+        Err(e) => {
+          println(`  ✕ FAIL: CancelOrder failed: ${e}`);
+          failed += 1;
+        }
+      };
+    },
+    Err(e) => {
+      println(`  ✕ FAIL: Setup order for cancel failed: ${e}`);
+      failed += 1;
+    }
+  };
+
+  // Summary
+  println("\n================================================================================");
+  println(`  Application Layer Test Suite: ${passed} Passed, ${failed} Failed`);
+  println("================================================================================");
+
+  if failed > 0 {
+    panic("Some use case tests failed");
+  }
+}

@@ -1,0 +1,30 @@
+// ==============================================================================
+// Domain Layer: Domain Events
+// events.aura - Pure Business Domain Event Definitions
+// ==============================================================================
+
+export struct DomainEvent {
+  eventId: String,
+  eventType: String,
+  aggregateId: String,
+  occurredAt: String,
+  payload: Any
+};
+
+export fn NewDomainEvent(eventType: String, aggregateId: String, payload: Any): DomainEvent => {
+  let id = `evt_${time.now()}_${aggregateId}`;
+  {
+    eventId: id,
+    eventType: eventType,
+    aggregateId: aggregateId,
+    occurredAt: time.isoString(),
+    payload: payload
+  }
+}
+
+// Event Type Names
+export fn EventOrderCreated(): String => "ORDER_CREATED";
+export fn EventOrderConfirmed(): String => "ORDER_CONFIRMED";
+export fn EventOrderCancelled(): String => "ORDER_CANCELLED";
+export fn EventStockReserved(): String => "STOCK_RESERVED";
+export fn EventStockReleased(): String => "STOCK_RELEASED";

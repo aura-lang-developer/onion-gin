@@ -1,0 +1,46 @@
+// ==============================================================================
+// Domain Layer: Domain Service
+// pricing_service.aura - Pricing, Discount & Tax Calculation Engine
+// ==============================================================================
+
+import { OrderItem } from "../model/order";
+
+export struct PricingCalculation {
+  subtotal: Float,
+  discount: Float,
+  tax: Float,
+  total: Float
+};
+
+export struct PricingService {
+  defaultTaxRate: Float,
+  vipDiscountRate: Float
+};
+
+export fn NewPricingService(defaultTaxRate: Float, vipDiscountRate: Float): PricingService => {
+  {
+    defaultTaxRate: defaultTaxRate,
+    vipDiscountRate: vipDiscountRate
+  }
+}
+
+// Calculates financial totals across order items applying customer tier discounts
+fn (s: PricingService) CalculateTotals(items: []OrderItem, isVipCustomer: Bool): PricingCalculation => {
+  let mut sub = 0.0;
+  for item in items {
+    sub = sub + item.subtotal;
+  }
+
+  let discountRate = if isVipCustomer { s.vipDiscountRate } else { 0.0 };
+  let discount = sub * discountRate;
+  let discountedSub = sub - discount;
+  let tax = discountedSub * s.defaultTaxRate;
+  let total = discountedSub + tax;
+
+  {
+    subtotal: sub,
+    discount: discount,
+    tax: tax,
+    total: total
+  }
+}

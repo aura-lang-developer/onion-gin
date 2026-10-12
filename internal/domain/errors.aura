@@ -1,0 +1,18 @@
+// ==============================================================================
+// Domain Layer: Core Business Errors
+// errors.aura - Pure Domain Error Constants & Predicates
+// ==============================================================================
+
+export fn ErrOrderNotFound(): String => "DOMAIN_ERROR: Order not found";
+export fn ErrProductNotFound(): String => "DOMAIN_ERROR: Product not found";
+export fn ErrInsufficientStock(): String => "DOMAIN_ERROR: Insufficient stock for product";
+export fn ErrInvalidOrderStatus(): String => "DOMAIN_ERROR: Invalid order status transition";
+export fn ErrEmptyOrderItems(): String => "DOMAIN_ERROR: Order must contain at least one item";
+export fn ErrInvalidQuantity(): String => "DOMAIN_ERROR: Quantity must be greater than zero";
+export fn ErrNegativePrice(): String => "DOMAIN_ERROR: Price cannot be negative";
+export fn ErrCustomerRequired(): String => "DOMAIN_ERROR: Customer ID is required";
+
+// Checks if an error string represents a domain error
+export fn IsDomainError(err: String): Bool => {
+  err.startsWith("DOMAIN_ERROR:")
+}

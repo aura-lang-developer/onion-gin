@@ -1,0 +1,60 @@
+// ==============================================================================
+// Infrastructure Layer: Email Notification Adapter
+// email_notifier.aura - Implements INotificationService Port Interface
+// ==============================================================================
+
+import { Order } from "../../domain/model/order";
+
+export struct SentEmail {
+  toCustomer: String,
+  subject: String,
+  body: String,
+  sentAt: String
+};
+
+export struct EmailNotifier {
+  __aura_type: String,
+  sentEmails: []SentEmail
+};
+
+export fn NewEmailNotifier(): EmailNotifier => {
+  let empty: []SentEmail = [];
+  { __aura_type: "EmailNotifier", sentEmails: empty }
+}
+
+fn (n: *EmailNotifier) NotifyOrderPlaced(order: Order): Unit => {
+  let email: SentEmail = {
+    toCustomer: order.customerId,
+    subject: `Order Confirmation - #${order.id}`,
+    body: `Thank you for your order! Total charged: $${order.total}. Status: ${order.status}.`,
+    sentAt: time.isoString()
+  };
+  n.sentEmails = append(n.sentEmails, email);
+  println(`[EmailNotifier] ✉ Sent order placed email to customer '${order.customerId}' for order '${order.id}'`);
+}
+
+fn (n: *EmailNotifier) NotifyOrderConfirmed(order: Order): Unit => {
+  let email: SentEmail = {
+    toCustomer: order.customerId,
+    subject: `Order Confirmed - #${order.id}`,
+    body: `Your order #${order.id} has been confirmed and is being prepared for shipment.`,
+    sentAt: time.isoString()
+  };
+  n.sentEmails = append(n.sentEmails, email);
+  println(`[EmailNotifier] ✉ Sent order confirmed email to customer '${order.customerId}' for order '${order.id}'`);
+}
+
+fn (n: *EmailNotifier) NotifyOrderCancelled(order: Order, reason: String): Unit => {
+  let email: SentEmail = {
+    toCustomer: order.customerId,
+    subject: `Order Cancelled - #${order.id}`,
+    body: `Your order #${order.id} was cancelled. Reason: ${reason}.`,
+    sentAt: time.isoString()
+  };
+  n.sentEmails = append(n.sentEmails, email);
+  println(`[EmailNotifier] ✉ Sent order cancellation email to customer '${order.customerId}' for order '${order.id}'`);
+}
+
+fn (n: *EmailNotifier) GetSentEmails(): []SentEmail => {
+  n.sentEmails
+}

@@ -1,0 +1,140 @@
+// ==============================================================================
+// Domain Layer: Order Aggregate Root
+// order.aura - Order Invariants, Value Objects & State Machine Transitions
+// ==============================================================================
+
+import { ErrEmptyOrderItems, ErrInvalidOrderStatus, ErrCustomerRequired } from "../errors";
+
+// Order Item Value Object
+export struct OrderItem {
+  productId: String,
+  productName: String,
+  unitPrice: Float,
+  quantity: Int,
+  subtotal: Float
+};
+
+export fn NewOrderItem(productId: String, productName: String, unitPrice: Float, quantity: Int): OrderItem => {
+  let qFloat = parseFloat(`${quantity}`);
+  let sub = unitPrice * qFloat;
+  {
+    productId: productId,
+    productName: productName,
+    unitPrice: unitPrice,
+    quantity: quantity,
+    subtotal: sub
+  }
+}
+
+// Order Status Constants
+export fn OrderStatusPending(): String => "PENDING";
+export fn OrderStatusConfirmed(): String => "CONFIRMED";
+export fn OrderStatusShipped(): String => "SHIPPED";
+export fn OrderStatusDelivered(): String => "DELIVERED";
+export fn OrderStatusCancelled(): String => "CANCELLED";
+
+// Order Aggregate Root
+export struct Order {
+  id: String,
+  customerId: String,
+  items: []OrderItem,
+  subtotal: Float,
+  tax: Float,
+  discount: Float,
+  total: Float,
+  status: String,
+  cancelReason: String,
+  createdAt: String,
+  updatedAt: String
+};
+
+export fn NewOrder(id: String, customerId: String, items: []OrderItem, taxRate: Float, discountAmount: Float): Result<Order, String> => {
+  if customerId == "" {
+    return Err(ErrCustomerRequired());
+  }
+  if len(items) == 0 {
+    return Err(ErrEmptyOrderItems());
+  }
+
+  let mut sub = 0.0;
+  for item in items {
+    sub = sub + item.subtotal;
+  }
+
+  let tax = sub * taxRate;
+  let total = sub - discountAmount + tax;
+
+  let ord: Order = {
+    id: id,
+    customerId: customerId,
+    items: items,
+    subtotal: sub,
+    tax: tax,
+    discount: discountAmount,
+    total: total,
+    status: OrderStatusPending(),
+    cancelReason: "",
+    createdAt: time.isoString(),
+    updatedAt: time.isoString()
+  };
+
+  Ok(ord)
+}
+
+// Confirms order transitioning from PENDING to CONFIRMED
+fn (o: *Order) Confirm(): Result<Unit, String> => {
+  if o.status != OrderStatusPending() {
+    return Err(`${ErrInvalidOrderStatus()}: cannot confirm order in status '${o.status}'`);
+  }
+  o.status = OrderStatusConfirmed();
+  o.updatedAt = time.isoString();
+  Ok(())
+}
+
+// Ships order transitioning from CONFIRMED to SHIPPED
+fn (o: *Order) Ship(): Result<Unit, String> => {
+  if o.status != OrderStatusConfirmed() {
+    return Err(`${ErrInvalidOrderStatus()}: cannot ship order in status '${o.status}'`);
+  }
+  o.status = OrderStatusShipped();
+  o.updatedAt = time.isoString();
+  Ok(())
+}
+
+// Marks order as DELIVERED
+fn (o: *Order) Deliver(): Result<Unit, String> => {
+  if o.status != OrderStatusShipped() {
+    return Err(`${ErrInvalidOrderStatus()}: cannot deliver order in status '${o.status}'`);
+  }
+  o.status = OrderStatusDelivered();
+  o.updatedAt = time.isoString();
+  Ok(())
+}
+
+// Cancels order with a reason
+fn (o: *Order) Cancel(reason: String): Result<Unit, String> => {
+  if o.status == OrderStatusShipped() || o.status == OrderStatusDelivered() {
+    return Err(`${ErrInvalidOrderStatus()}: cannot cancel order already shipped or delivered`);
+  }
+  if o.status == OrderStatusCancelled() {
+    return Err(`${ErrInvalidOrderStatus()}: order is already cancelled`);
+  }
+
+  o.status = OrderStatusCancelled();
+  o.cancelReason = reason;
+  o.updatedAt = time.isoString();
+  Ok(())
+}
+
+// Predicates
+fn (o: *Order) IsPending(): Bool => {
+  o.status == OrderStatusPending()
+}
+
+fn (o: *Order) IsConfirmed(): Bool => {
+  o.status == OrderStatusConfirmed()
+}
+
+fn (o: *Order) IsCancelled(): Bool => {
+  o.status == OrderStatusCancelled()
+}

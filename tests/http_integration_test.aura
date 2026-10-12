@@ -1,0 +1,320 @@
+// ==============================================================================
+// Integration Test Suite: Presentation Layer (HTTP & Gin Endpoints)
+// tests/http_integration_test.aura - End-to-End HTTP Dispatch Tests via Gin ServeHTTP
+// ==============================================================================
+
+import { LoadConfig } from "../internal/infrastructure/config/config";
+import { NewInMemoryOrderRepository } from "../internal/infrastructure/persistence/inmemory_order_repo";
+import { NewInMemoryProductRepository } from "../internal/infrastructure/persistence/inmemory_product_repo";
+import { NewCSPEventBus } from "../internal/infrastructure/messaging/csp_event_bus";
+import { NewEmailNotifier } from "../internal/infrastructure/external/email_notifier";
+import { NewSecurityAuditAdapter } from "../internal/infrastructure/external/audit_adapter";
+import { NewPricingService } from "../internal/domain/service/pricing_service";
+import { NewOrderUseCase } from "../internal/application/services/order_service";
+import { NewCatalogUseCase } from "../internal/application/services/catalog_service";
+import { NewOrderHttpHandler } from "../internal/presentation/http/order_handler";
+import { NewProductHttpHandler } from "../internal/presentation/http/product_handler";
+import { NewSystemHttpHandler } from "../internal/presentation/http/system_handler";
+import { SetupRouter } from "../internal/presentation/http/router";
+import { Engine, SetMode } from "../../gin/engine";
+
+export fn main(): Unit => {
+  let mut passed = 0;
+  let mut failed = 0;
+
+  println("================================================================================");
+  println("  🧅 ONION ARCHITECTURE - GIN HTTP INTEGRATION SUITE");
+  println("================================================================================");
+
+  SetMode("test");
+
+  // Helper factory for mock responses
+  let makeMockRes = fn(): Any => {
+    let mut recordedData = "";
+    let mut recordedStatus = 200;
+    let mut recordedHeaders: Any = {};
+
+    {
+      statusCode: 200,
+      headers: recordedHeaders,
+      setHeader: fn(k: String, v: String): Unit => {
+        recordedHeaders[k] = v;
+      },
+      writeHead: fn(st: Int): Unit => {
+        recordedStatus = st;
+      },
+      end: fn(dt: Any): Unit => {
+        if dt != null && dt != undefined {
+          recordedData = `${dt}`;
+        }
+      },
+      getStatus: fn(): Int => recordedStatus,
+      getBody: fn(): String => recordedData
+    }
+  };
+
+  // Helper factory for mock requests
+  let makeMockReq = fn(method: String, url: String, body: String, headers: Any): Any => {
+    let qIdx = url.indexOf("?");
+    let path = if qIdx >= 0 { url.substring(0, qIdx) } else { url };
+
+    let mut queryObj: Any = {};
+    if qIdx >= 0 {
+      let qStr = url.substring(qIdx + 1);
+      let parts = qStr.split("&");
+      for part in parts {
+        let kv = part.split("=");
+        if len(kv) >= 2 {
+          queryObj[kv[0]] = kv[1];
+        }
+      }
+    }
+
+    {
+      method: method,
+      url: url,
+      path: path,
+      headers: headers,
+      query: queryObj,
+      rawBody: body,
+      getHeader: fn(name: String): String => {
+        let lower = name.toLowerCase();
+        if headers[lower] != null {
+          `${headers[lower]}`
+        } else if headers[name] != null {
+          `${headers[name]}`
+        } else {
+          ""
+        }
+      }
+    }
+  };
+
+  // 1. Bootstrap Layers (Composition Root)
+  let config = LoadConfig();
+  let mut orderRepo = NewInMemoryOrderRepository();
+  let mut productRepo = NewInMemoryProductRepository();
+  let mut eventBus = NewCSPEventBus();
+  let mut notifier = NewEmailNotifier();
+  let mut auditAdapter = NewSecurityAuditAdapter();
+
+  let pricingService = NewPricingService(config.taxRate, config.vipDiscountRate);
+
+  let orderUseCase = NewOrderUseCase(&orderRepo, &productRepo, pricingService, &notifier, &eventBus);
+  let catalogUseCase = NewCatalogUseCase(&productRepo);
+
+  let orderHandler = NewOrderHttpHandler(orderUseCase);
+  let productHandler = NewProductHttpHandler(catalogUseCase);
+  let systemHandler = NewSystemHttpHandler(config, &auditAdapter, &eventBus);
+
+  let router: Any = SetupRouter(orderHandler, productHandler, systemHandler, config);
+
+  // ----------------------------------------------------------------------------
+  // Test 1: GET / (Root Documentation & Endpoint Index)
+  // ----------------------------------------------------------------------------
+  println("\n[TEST 1] GET / -> 200 Service Index");
+  let res1 = makeMockRes();
+  let req1 = makeMockReq("GET", "/", "", {});
+  router.ServeHTTP(req1, res1);
+
+  if res1.getStatus() == 200 && res1.getBody().includes("running") {
+    println("  ✓ PASS: GET / returned 200 OK with service index");
+    passed += 1;
+  } else {
+    println(`  ✕ FAIL: Status ${res1.getStatus()}, body: ${res1.getBody()}`);
+    failed += 1;
+  };
+
+  // ----------------------------------------------------------------------------
+  // Test 2: GET /health (Health Check)
+  // ----------------------------------------------------------------------------
+  println("\n[TEST 2] GET /health -> 200 UP");
+  let res2 = makeMockRes();
+  let req2 = makeMockReq("GET", "/health", "", {});
+  router.ServeHTTP(req2, res2);
+
+  if res2.getStatus() == 200 && res2.getBody().includes("UP") {
+    println("  ✓ PASS: GET /health returned 200 UP");
+    passed += 1;
+  } else {
+    println(`  ✕ FAIL: Status ${res2.getStatus()}, body: ${res2.getBody()}`);
+    failed += 1;
+  };
+
+  // ----------------------------------------------------------------------------
+  // Test 3: GET /api/v1/products (Catalog Listing)
+  // ----------------------------------------------------------------------------
+  println("\n[TEST 3] GET /api/v1/products -> 200 Pre-seeded Products");
+  let res3 = makeMockRes();
+  let req3 = makeMockReq("GET", "/api/v1/products", "", {});
+  router.ServeHTTP(req3, res3);
+
+  if res3.getStatus() == 200 && res3.getBody().includes("AURA-BOOK-01") {
+    println("  ✓ PASS: GET /api/v1/products returned 200 with catalog items");
+    passed += 1;
+  } else {
+    println(`  ✕ FAIL: Status ${res3.getStatus()}, body: ${res3.getBody()}`);
+    failed += 1;
+  };
+
+  // ----------------------------------------------------------------------------
+  // Test 4: GET /api/v1/products/prod_001 (Product by ID)
+  // ----------------------------------------------------------------------------
+  println("\n[TEST 4] GET /api/v1/products/prod_001 -> 200 Specific Product");
+  let res4 = makeMockRes();
+  let req4 = makeMockReq("GET", "/api/v1/products/prod_001", "", {});
+  router.ServeHTTP(req4, res4);
+
+  if res4.getStatus() == 200 && res4.getBody().includes("AURA-BOOK-01") {
+    println("  ✓ PASS: GET /api/v1/products/prod_001 returned 200 OK");
+    passed += 1;
+  } else {
+    println(`  ✕ FAIL: Status ${res4.getStatus()}, body: ${res4.getBody()}`);
+    failed += 1;
+  };
+
+  // ----------------------------------------------------------------------------
+  // Test 5: POST /api/v1/orders (Place Order)
+  // ----------------------------------------------------------------------------
+  println("\n[TEST 5] POST /api/v1/orders -> 201 Created Order");
+  let orderPayload = "{\"customerId\":\"cust_web_1\",\"isVip\":false,\"items\":[{\"productId\":\"prod_001\",\"quantity\":1}]}";
+  let res5 = makeMockRes();
+  let req5 = makeMockReq("POST", "/api/v1/orders", orderPayload, { "content-type": "application/json" });
+  router.ServeHTTP(req5, res5);
+
+  let mut placedOrderId = "";
+  if res5.getStatus() == 201 && res5.getBody().includes("Order placed successfully") {
+    println("  ✓ PASS: POST /api/v1/orders placed order with status 201 Created");
+    passed += 1;
+
+    // Extract order id from JSON body
+    let parsed: Any = JSON.parse(res5.getBody());
+    if parsed != null && parsed.order != null && parsed.order.id != null {
+      placedOrderId = `${parsed.order.id}`;
+    }
+  } else {
+    println(`  ✕ FAIL: Status ${res5.getStatus()}, body: ${res5.getBody()}`);
+    failed += 1;
+  };
+
+  // ----------------------------------------------------------------------------
+  // Test 6: GET /api/v1/orders/:id (Retrieve Order)
+  // ----------------------------------------------------------------------------
+  println("\n[TEST 6] GET /api/v1/orders/:id -> 200 Retrieved Order");
+  if placedOrderId != "" {
+    let res6 = makeMockRes();
+    let req6 = makeMockReq("GET", `/api/v1/orders/${placedOrderId}`, "", {});
+    router.ServeHTTP(req6, res6);
+
+    if res6.getStatus() == 200 && res6.getBody().includes(placedOrderId) {
+      println(`  ✓ PASS: GET /api/v1/orders/${placedOrderId} returned 200 OK`);
+      passed += 1;
+    } else {
+      println(`  ✕ FAIL: Status ${res6.getStatus()}, body: ${res6.getBody()}`);
+      failed += 1;
+    };
+  } else {
+    println("  ✕ FAIL: placedOrderId was empty");
+    failed += 1;
+  };
+
+  // ----------------------------------------------------------------------------
+  // Test 7: POST /api/v1/orders/:id/confirm (Confirm Order)
+  // ----------------------------------------------------------------------------
+  println("\n[TEST 7] POST /api/v1/orders/:id/confirm -> 200 Confirmed");
+  if placedOrderId != "" {
+    let res7 = makeMockRes();
+    let req7 = makeMockReq("POST", `/api/v1/orders/${placedOrderId}/confirm`, "", {});
+    router.ServeHTTP(req7, res7);
+
+    if res7.getStatus() == 200 && res7.getBody().includes("CONFIRMED") {
+      println(`  ✓ PASS: Order '${placedOrderId}' confirmed successfully via HTTP POST`);
+      passed += 1;
+    } else {
+      println(`  ✕ FAIL: Status ${res7.getStatus()}, body: ${res7.getBody()}`);
+      failed += 1;
+    };
+  } else {
+    println("  ✕ FAIL: placedOrderId was empty");
+    failed += 1;
+  };
+
+  // ----------------------------------------------------------------------------
+  // Test 8: POST /admin/products WITHOUT BasicAuth -> 401 Unauthorized
+  // ----------------------------------------------------------------------------
+  println("\n[TEST 8] POST /admin/products without BasicAuth -> 401 Unauthorized");
+  let newProdPayload = "{\"sku\":\"NEW-401-PROD\",\"name\":\"Unauthorized Gadget\",\"price\":19.99,\"stock\":5}";
+  let res8 = makeMockRes();
+  let req8 = makeMockReq("POST", "/admin/products", newProdPayload, { "content-type": "application/json" });
+  router.ServeHTTP(req8, res8);
+
+  if res8.getStatus() == 401 {
+    println("  ✓ PASS: Unauthenticated request to /admin/products rejected with 401");
+    passed += 1;
+  } else {
+    println(`  ✕ FAIL: Expected 401, got ${res8.getStatus()}`);
+    failed += 1;
+  };
+
+  // ----------------------------------------------------------------------------
+  // Test 9: POST /admin/products WITH BasicAuth -> 201 Created
+  // ----------------------------------------------------------------------------
+  println("\n[TEST 9] POST /admin/products with BasicAuth -> 201 Created");
+  let res9 = makeMockRes();
+  let req9 = makeMockReq("POST", "/admin/products", newProdPayload, {
+    "content-type": "application/json",
+    "authorization": "Basic YWRtaW46b25pb24yMDI2"
+  });
+  router.ServeHTTP(req9, res9);
+
+  if res9.getStatus() == 201 && res9.getBody().includes("NEW-401-PROD") {
+    println("  ✓ PASS: Authenticated admin successfully created new product (201 Created)");
+    passed += 1;
+  } else {
+    println(`  ✕ FAIL: Status ${res9.getStatus()}, body: ${res9.getBody()}`);
+    failed += 1;
+  };
+
+  // ----------------------------------------------------------------------------
+  // Test 10: GET /admin/audit WITH BasicAuth -> 200 OK
+  // ----------------------------------------------------------------------------
+  println("\n[TEST 10] GET /admin/audit with BasicAuth -> 200 OK");
+  let res10 = makeMockRes();
+  let req10 = makeMockReq("GET", "/admin/audit", "", {
+    "authorization": "Basic YWRtaW46b25pb24yMDI2"
+  });
+  router.ServeHTTP(req10, res10);
+
+  if res10.getStatus() == 200 && res10.getBody().includes("entries") {
+    println("  ✓ PASS: Authenticated admin retrieved security audit log");
+    passed += 1;
+  } else {
+    println(`  ✕ FAIL: Status ${res10.getStatus()}, body: ${res10.getBody()}`);
+    failed += 1;
+  };
+
+  // ----------------------------------------------------------------------------
+  // Test 11: GET /non-existent-route -> 404 Not Found
+  // ----------------------------------------------------------------------------
+  println("\n[TEST 11] GET /does-not-exist -> 404 Not Found");
+  let res11 = makeMockRes();
+  let req11 = makeMockReq("GET", "/does-not-exist", "", {});
+  router.ServeHTTP(req11, res11);
+
+  if res11.getStatus() == 404 {
+    println("  ✓ PASS: Non-existent route triggered 404 Not Found fallback");
+    passed += 1;
+  } else {
+    println(`  ✕ FAIL: Expected 404, got ${res11.getStatus()}`);
+    failed += 1;
+  };
+
+  // Summary
+  println("\n================================================================================");
+  println(`  HTTP Integration Test Suite: ${passed} Passed, ${failed} Failed`);
+  println("================================================================================");
+
+  if failed > 0 {
+    panic("Some HTTP integration tests failed");
+  }
+}

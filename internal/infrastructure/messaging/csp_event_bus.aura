@@ -1,0 +1,44 @@
+// ==============================================================================
+// Infrastructure Layer: CSP Event Bus Adapter
+// csp_event_bus.aura - In-Memory Asynchronous Pub/Sub Event Bus Using Fibers & Channels
+// ==============================================================================
+
+import { DomainEvent } from "../../domain/events";
+
+export struct CSPEventBus {
+  __aura_type: String,
+  subscribers: []Channel<String>,
+  eventHistory: []DomainEvent
+};
+
+export fn NewCSPEventBus(): CSPEventBus => {
+  let emptySubs: []Channel<String> = [];
+  let emptyHistory: []DomainEvent = [];
+  {
+    __aura_type: "CSPEventBus",
+    subscribers: emptySubs,
+    eventHistory: emptyHistory
+  }
+}
+
+// Subscribes a channel to real-time event broadcasting
+fn (bus: *CSPEventBus) Subscribe(ch: Channel<String>): Unit => {
+  bus.subscribers = append(bus.subscribers, ch);
+}
+
+// Publishes a domain event asynchronously across all subscriber fibers
+fn (bus: *CSPEventBus) Publish(event: DomainEvent): Unit => {
+  bus.eventHistory = append(bus.eventHistory, event);
+
+  let msg = `[${event.eventType}] Aggregate: ${event.aggregateId} at ${event.occurredAt}`;
+
+  // Broadcast to all active subscriber channels
+  for sub in bus.subscribers {
+    sub <- msg;
+  }
+}
+
+// Returns recorded event history for auditing and introspection
+fn (bus: *CSPEventBus) GetHistory(): []DomainEvent => {
+  bus.eventHistory
+}

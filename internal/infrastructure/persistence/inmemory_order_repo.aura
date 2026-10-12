@@ -1,0 +1,60 @@
+// ==============================================================================
+// Infrastructure Layer: In-Memory Order Repository Adapter
+// inmemory_order_repo.aura - Implements IOrderRepository Port Interface
+// ==============================================================================
+
+import { Order } from "../../domain/model/order";
+
+export struct InMemoryOrderRepository {
+  __aura_type: String,
+  orders: []Order
+};
+
+export fn NewInMemoryOrderRepository(): InMemoryOrderRepository => {
+  let empty: []Order = [];
+  { __aura_type: "InMemoryOrderRepository", orders: empty }
+}
+
+// Saves a new order to the in-memory store
+fn (repo: *InMemoryOrderRepository) Save(order: Order): Result<Unit, String> => {
+  for existing in repo.orders {
+    if existing.id == order.id {
+      return Err(`Order with ID '${order.id}' already exists`);
+    }
+  }
+  repo.orders = append(repo.orders, order);
+  Ok(())
+}
+
+// Retrieves order by ID
+fn (repo: *InMemoryOrderRepository) FindById(id: String): Option<Order> => {
+  for ord in repo.orders {
+    if ord.id == id {
+      return Some(ord);
+    }
+  }
+  None
+}
+
+// Lists all orders
+fn (repo: *InMemoryOrderRepository) FindAll(): []Order => {
+  repo.orders
+}
+
+// Updates an existing order in place
+fn (repo: *InMemoryOrderRepository) Update(order: Order): Result<Unit, String> => {
+  let mut foundIdx = -1;
+  for i, ord in repo.orders {
+    if ord.id == order.id {
+      foundIdx = i;
+      break;
+    }
+  }
+
+  if foundIdx >= 0 {
+    repo.orders[foundIdx] = order;
+    Ok(())
+  } else {
+    Err(`Order with ID '${order.id}' not found for update`)
+  }
+}

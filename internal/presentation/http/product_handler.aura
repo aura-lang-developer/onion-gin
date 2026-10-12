@@ -1,0 +1,111 @@
+// ==============================================================================
+// Presentation Layer: HTTP Product Handler (Gin for Aura)
+// product_handler.aura - Handles Product Catalog & Inventory Endpoints
+// ==============================================================================
+
+import { GinContext } from "../../../../gin/context";
+import { ValidateSchema, FieldRule } from "../../../../gin/binding";
+import { CatalogUseCase } from "../../application/services/catalog_service";
+import { ToProductResponseDTO, ProductResponseDTO } from "../../application/dto/order_dto";
+
+export struct ProductHttpHandler {
+  useCase: CatalogUseCase
+};
+
+export fn NewProductHttpHandler(useCase: CatalogUseCase): ProductHttpHandler => {
+  { useCase: useCase }
+}
+
+let createProductRules: []FieldRule = [
+  { field: "sku", rule: "required" },
+  { field: "name", rule: "required,min:3" }
+];
+
+// GET /api/v1/products - Lists all products in catalog
+fn (h: ProductHttpHandler) HandleListProducts(c: GinContext): Unit => {
+  let inStockOnly = c.Query("instock");
+  let prods = h.useCase.ListProducts();
+
+  let mut formatted: []ProductResponseDTO = [];
+  for p in prods {
+    if inStockOnly == "true" {
+      if p.stock > 0 {
+        formatted = append(formatted, ToProductResponseDTO(p));
+      }
+    } else {
+      formatted = append(formatted, ToProductResponseDTO(p));
+    }
+  }
+
+  c.JSON(StatusOK, {
+    total: len(formatted),
+    products: formatted
+  });
+}
+
+// GET /api/v1/products/:id - Retrieves product by ID
+fn (h: ProductHttpHandler) HandleGetProduct(c: GinContext): Unit => {
+  let id = c.Param("id");
+  let res = h.useCase.GetProduct(id);
+  match res {
+    Ok(p) => c.JSON(StatusOK, ToProductResponseDTO(p)),
+    Err(e) => c.JSON(StatusNotFound, { error: e, id: id })
+  };
+}
+
+// POST /admin/products - Creates a new product (Protected Admin endpoint)
+fn (h: ProductHttpHandler) HandleCreateProduct(c: GinContext): Unit => {
+  let bindRes = c.BindJSON();
+  match bindRes {
+    Ok(body) => {
+      let valRes = ValidateSchema(body, createProductRules);
+      match valRes {
+        Ok(_) => {
+          let sku = `${body.sku}`;
+          let name = `${body.name}`;
+          let price = if body.price != null && body.price != undefined { parseFloat(`${body.price}`) } else { 0.0 };
+          let stock = if body.stock != null && body.stock != undefined { parseInt(`${body.stock}`, 10) } else { 0 };
+
+          let createRes = h.useCase.CreateProduct(sku, name, price, stock);
+          match createRes {
+            Ok(p) => c.JSON(StatusCreated, {
+              status: "success",
+              message: "Product created successfully",
+              product: ToProductResponseDTO(p)
+            }),
+            Err(e) => c.JSON(StatusBadRequest, { status: "error", message: e })
+          };
+        },
+        Err(valErr) => {
+          c.JSON(StatusBadRequest, { status: "error", message: valErr });
+        }
+      };
+    },
+    Err(e) => {
+      c.JSON(StatusBadRequest, { status: "error", message: "Invalid JSON payload" });
+    }
+  };
+}
+
+// POST /admin/products/:id/restock - Restocks inventory (Protected Admin endpoint)
+fn (h: ProductHttpHandler) HandleRestockProduct(c: GinContext): Unit => {
+  let id = c.Param("id");
+  let bindRes = c.BindJSON();
+  match bindRes {
+    Ok(body) => {
+      let qty = if body.quantity != null && body.quantity != undefined { parseInt(`${body.quantity}`, 10) } else { 0 };
+      let restockRes = h.useCase.RestockProduct(id, qty);
+      match restockRes {
+        Ok(p) => c.JSON(StatusOK, {
+          status: "success",
+          message: `Restocked ${qty} units`,
+          product: ToProductResponseDTO(p)
+        }),
+        Err(e) => c.JSON(StatusBadRequest, { status: "error", message: e })
+      };
+    },
+    Err(e) => {
+      c.JSON(StatusBadRequest, { status: "error", message: "Missing quantity in request body" });
+    }
+  };
+}

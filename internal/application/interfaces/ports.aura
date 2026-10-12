@@ -1,0 +1,37 @@
+// ==============================================================================
+// Application Layer: Port Interfaces (Dependency Inversion Principle)
+// ports.aura - Abstract Contracts Defined by the Core, Implemented by Infrastructure
+// ==============================================================================
+
+import { Order } from "../../domain/model/order";
+import { Product } from "../../domain/model/product";
+import { DomainEvent } from "../../domain/events";
+
+// Inbound/Outbound Port: Order Persistence Repository Contract
+export interface IOrderRepository {
+  Save(order: Order): Result<Unit, String>;
+  FindById(id: String): Option<Order>;
+  FindAll(): []Order;
+  Update(order: Order): Result<Unit, String>;
+}
+
+// Inbound/Outbound Port: Product & Catalog Repository Contract
+export interface IProductRepository {
+  Save(product: Product): Result<Unit, String>;
+  FindById(id: String): Option<Product>;
+  FindBySku(sku: String): Option<Product>;
+  FindAll(): []Product;
+  Update(product: Product): Result<Unit, String>;
+}
+
+// Outbound Port: External Notification Service Contract
+export interface INotificationService {
+  NotifyOrderPlaced(order: Order): Unit;
+  NotifyOrderConfirmed(order: Order): Unit;
+  NotifyOrderCancelled(order: Order, reason: String): Unit;
+}
+
+// Outbound Port: Domain Event Publisher Contract
+export interface IEventPublisher {
+  Publish(event: DomainEvent): Unit;
+}

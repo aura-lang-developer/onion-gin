@@ -1,0 +1,61 @@
+// ==============================================================================
+// Presentation Layer: HTTP System & Health Handler (Gin for Aura)
+// system_handler.aura - Health Checks, Audit Trails, and Real-Time SSE Streams
+// ==============================================================================
+
+import { GinContext } from "../../../../gin/context";
+import { StreamChannel } from "../../../../gin/channels";
+import { AppConfig } from "../../infrastructure/config/config";
+import { SecurityAuditAdapter } from "../../infrastructure/external/audit_adapter";
+import { CSPEventBus } from "../../infrastructure/messaging/csp_event_bus";
+
+export struct SystemHttpHandler {
+  config: AppConfig,
+  audit: Any,
+  bus: Any
+};
+
+export fn NewSystemHttpHandler(
+  config: AppConfig,
+  audit: Any,
+  bus: Any
+): SystemHttpHandler => {
+  {
+    config: config,
+    audit: audit,
+    bus: bus
+  }
+}
+
+// GET /health - Returns health probe and microservice status
+fn (h: SystemHttpHandler) HandleHealth(c: GinContext): Unit => {
+  c.JSON(StatusOK, {
+    status: "UP",
+    service: h.config.serviceName,
+    version: h.config.version,
+    environment: h.config.environment,
+    timestamp: time.isoString()
+  });
+}
+
+// GET /api/v1/system/audit - Returns audit logs (Used by admin / compliance)
+fn (h: SystemHttpHandler) HandleAudit(c: GinContext): Unit => {
+  let entries = h.audit.GetEntries();
+  c.JSON(StatusOK, {
+    total: len(entries),
+    entries: entries
+  });
+}
+
+// GET /api/v1/stream - Real-time Server-Sent Events (SSE) feed via CSP Channels
+fn (h: SystemHttpHandler) HandleLiveStream(c: GinContext): Unit => {
+  let ch: Channel<String> = Channel.make<String>(20);
+  h.bus.Subscribe(ch);
+
+  // Send initial welcome message
+  spawn {
+    ch <- `connected: [${h.config.serviceName}] SSE live stream active at ${time.isoString()}`;
+  };
+
+  StreamChannel(&c, ch);
+}

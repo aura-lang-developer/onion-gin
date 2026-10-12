@@ -1,0 +1,62 @@
+// ==============================================================================
+// Onion Architecture Entrypoint & Composition Root
+// cmd/server/main.aura - Bootstraps Dependency Injection & Starts HTTP Server
+// ==============================================================================
+
+import { LoadConfig } from "../../internal/infrastructure/config/config";
+import { NewInMemoryOrderRepository } from "../../internal/infrastructure/persistence/inmemory_order_repo";
+import { NewInMemoryProductRepository } from "../../internal/infrastructure/persistence/inmemory_product_repo";
+import { NewCSPEventBus } from "../../internal/infrastructure/messaging/csp_event_bus";
+import { NewEmailNotifier } from "../../internal/infrastructure/external/email_notifier";
+import { NewSecurityAuditAdapter } from "../../internal/infrastructure/external/audit_adapter";
+import { NewPricingService } from "../../internal/domain/service/pricing_service";
+import { NewOrderUseCase } from "../../internal/application/services/order_service";
+import { NewCatalogUseCase } from "../../internal/application/services/catalog_service";
+import { NewOrderHttpHandler } from "../../internal/presentation/http/order_handler";
+import { NewProductHttpHandler } from "../../internal/presentation/http/product_handler";
+import { NewSystemHttpHandler } from "../../internal/presentation/http/system_handler";
+import { SetupRouter } from "../../internal/presentation/http/router";
+
+export fn main(): Unit => {
+  println("==================================================================");
+  println("  Aura Onion-Gin Microservice - Bootstrapping Composition Root    ");
+  println("==================================================================");
+
+  // 1. Load Configuration
+  let config = LoadConfig();
+  println(`[Config] Service: ${config.serviceName} | Env: ${config.environment} | Port: ${config.port}`);
+
+  // 2. Instantiate Infrastructure Layer (Adapters)
+  let mut orderRepo = NewInMemoryOrderRepository();
+  let mut productRepo = NewInMemoryProductRepository();
+  let mut eventBus = NewCSPEventBus();
+  let mut notifier = NewEmailNotifier();
+  let mut auditAdapter = NewSecurityAuditAdapter();
+
+  auditAdapter.LogAction("SERVER_INIT", "system", "infrastructure_layer");
+
+  // 3. Instantiate Domain Layer (Services)
+  let pricingService = NewPricingService(config.taxRate, config.vipDiscountRate);
+
+  // 4. Instantiate Application Layer (Use Cases with Injected Dependencies)
+  let orderUseCase = NewOrderUseCase(
+    &orderRepo,
+    &productRepo,
+    pricingService,
+    &notifier,
+    &eventBus
+  );
+  let catalogUseCase = NewCatalogUseCase(&productRepo);
+
+  // 5. Instantiate Presentation Layer (HTTP Handlers)
+  let orderHandler = NewOrderHttpHandler(orderUseCase);
+  let productHandler = NewProductHttpHandler(catalogUseCase);
+  let systemHandler = NewSystemHttpHandler(config, &auditAdapter, &eventBus);
+
+  // 6. Setup Router & Register Routes
+  let router = SetupRouter(orderHandler, productHandler, systemHandler, config);
+
+  // 7. Start HTTP Server
+  println(`\n🚀 Onion-Gin Microservice listening on http://localhost${config.port}`);
+  router.Run(config.port);
+}

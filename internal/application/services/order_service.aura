@@ -1,0 +1,205 @@
+// ==============================================================================
+// Application Layer: Order Use Case Service
+// order_service.aura - Orchestrates Business Use Cases Across Domain & Ports
+// ==============================================================================
+
+import { Order, OrderItem, NewOrder, NewOrderItem } from "../../domain/model/order";
+import { Product } from "../../domain/model/product";
+import { PricingService } from "../../domain/service/pricing_service";
+import { ErrOrderNotFound, ErrProductNotFound, ErrEmptyOrderItems } from "../../domain/errors";
+import { NewDomainEvent, EventOrderCreated, EventOrderConfirmed, EventOrderCancelled } from "../../domain/events";
+import { CreateOrderRequestDTO } from "../dto/order_dto";
+
+export struct OrderUseCase {
+  orderRepo: Any,
+  productRepo: Any,
+  pricingService: PricingService,
+  notifier: Any,
+  eventPublisher: Any
+};
+
+let mut orderSeq: Int = 1000;
+
+export fn NewOrderUseCase(
+  orderRepo: Any,
+  productRepo: Any,
+  pricingService: PricingService,
+  notifier: Any,
+  eventPublisher: Any
+): OrderUseCase => {
+  {
+    orderRepo: orderRepo,
+    productRepo: productRepo,
+    pricingService: pricingService,
+    notifier: notifier,
+    eventPublisher: eventPublisher
+  }
+}
+
+// 1. Create Order Use Case
+fn (uc: OrderUseCase) CreateOrder(req: CreateOrderRequestDTO): Result<Order, String> => {
+  if len(req.items) == 0 {
+    return Err(ErrEmptyOrderItems());
+  }
+
+  let mut orderItems: []OrderItem = [];
+
+  let mut stockErr: Option<String> = None;
+
+  // Validate and reserve stock for each requested product
+  for itemInput in req.items {
+    match stockErr {
+      None => {
+        let prodOpt: Option<Product> = uc.productRepo.FindById(itemInput.productId);
+        match prodOpt {
+          Some(prod) => {
+            let mut p = prod;
+            let reserveRes = p.ReserveStock(itemInput.quantity);
+            match reserveRes {
+              Ok(_) => {
+                uc.productRepo.Update(p);
+                let oi = NewOrderItem(p.id, p.name, p.price, itemInput.quantity);
+                orderItems = append(orderItems, oi);
+              },
+              Err(err) => {
+                stockErr = Some(err);
+              }
+            };
+          },
+          None => {
+            stockErr = Some(`${ErrProductNotFound()}: ID '${itemInput.productId}'`);
+          }
+        };
+      },
+      Some(_) => ()
+    };
+  }
+
+  match stockErr {
+    Some(err) => Err(err),
+    None => {
+      // Calculate pricing with pricing domain service
+      let pricing = uc.pricingService.CalculateTotals(orderItems, req.isVip);
+
+      orderSeq += 1;
+      let orderId = `ord_${time.now()}_${orderSeq}`;
+      let orderRes = NewOrder(orderId, req.customerId, orderItems, uc.pricingService.defaultTaxRate, pricing.discount);
+
+      match orderRes {
+        Ok(order) => {
+          let saveRes = uc.orderRepo.Save(order);
+          match saveRes {
+            Ok(_) => {
+              // Publish domain event
+              if uc.eventPublisher != null {
+                let evt = NewDomainEvent(EventOrderCreated(), order.id, {
+                  orderId: order.id,
+                  customerId: order.customerId,
+                  total: order.total
+                });
+                uc.eventPublisher.Publish(evt);
+              }
+
+              // Trigger external notification
+              if uc.notifier != null {
+                uc.notifier.NotifyOrderPlaced(order);
+              }
+
+              Ok(order)
+            },
+            Err(e) => Err(e)
+          }
+        },
+        Err(e) => Err(e)
+      }
+    }
+  }
+}
+
+// 2. Get Order by ID
+fn (uc: OrderUseCase) GetOrder(id: String): Result<Order, String> => {
+  let opt: Option<Order> = uc.orderRepo.FindById(id);
+  match opt {
+    Some(ord) => Ok(ord),
+    None => Err(`${ErrOrderNotFound()}: ID '${id}'`)
+  }
+}
+
+// 3. List All Orders
+fn (uc: OrderUseCase) ListOrders(): []Order => {
+  uc.orderRepo.FindAll()
+}
+
+// 4. Confirm Order Use Case
+fn (uc: OrderUseCase) ConfirmOrder(id: String): Result<Order, String> => {
+  let opt: Option<Order> = uc.orderRepo.FindById(id);
+  match opt {
+    Some(ord) => {
+      let mut o = ord;
+      let confirmRes = o.Confirm();
+      match confirmRes {
+        Ok(_) => {
+          uc.orderRepo.Update(o);
+
+          if uc.eventPublisher != null {
+            let evt = NewDomainEvent(EventOrderConfirmed(), o.id, { orderId: o.id });
+            uc.eventPublisher.Publish(evt);
+          }
+
+          if uc.notifier != null {
+            uc.notifier.NotifyOrderConfirmed(o);
+          }
+
+          Ok(o)
+        },
+        Err(e) => Err(e)
+      }
+    },
+    None => Err(`${ErrOrderNotFound()}: ID '${id}'`)
+  }
+}
+
+// 5. Cancel Order Use Case with Stock Restocking
+fn (uc: OrderUseCase) CancelOrder(id: String, reason: String): Result<Order, String> => {
+  let opt: Option<Order> = uc.orderRepo.FindById(id);
+  match opt {
+    Some(ord) => {
+      let mut o = ord;
+      let cancelRes = o.Cancel(reason);
+      match cancelRes {
+        Ok(_) => {
+          // Restock reserved inventory
+          for item in o.items {
+            let pOpt: Option<Product> = uc.productRepo.FindById(item.productId);
+            match pOpt {
+              Some(p) => {
+                let mut prod = p;
+                prod.ReleaseStock(item.quantity);
+                uc.productRepo.Update(prod);
+              },
+              None => ()
+            };
+          }
+
+          uc.orderRepo.Update(o);
+
+          if uc.eventPublisher != null {
+            let evt = NewDomainEvent(EventOrderCancelled(), o.id, {
+              orderId: o.id,
+              reason: reason
+            });
+            uc.eventPublisher.Publish(evt);
+          }
+
+          if uc.notifier != null {
+            uc.notifier.NotifyOrderCancelled(o, reason);
+          }
+
+          Ok(o)
+        },
+        Err(e) => Err(e)
+      }
+    },
+    None => Err(`${ErrOrderNotFound()}: ID '${id}'`)
+  }
+}

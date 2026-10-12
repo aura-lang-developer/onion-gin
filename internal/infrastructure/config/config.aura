@@ -1,0 +1,28 @@
+// ==============================================================================
+// Infrastructure Layer: Configuration
+// config.aura - Runtime Environment Settings & Default Configuration
+// ==============================================================================
+
+export struct AppConfig {
+  serviceName: String,
+  version: String,
+  environment: String,
+  port: String,
+  taxRate: Float,
+  vipDiscountRate: Float,
+  adminUser: String,
+  adminPass: String
+};
+
+export fn LoadConfig(): AppConfig => {
+  {
+    serviceName: "Aura Orders & Inventory Microservice",
+    version: "v1.0.0",
+    environment: "production",
+    port: ":8080",
+    taxRate: 0.10,        // 10% VAT / Sales Tax
+    vipDiscountRate: 0.15, // 15% VIP Customer Discount
+    adminUser: "admin",
+    adminPass: "onion2026"
+  }
+}

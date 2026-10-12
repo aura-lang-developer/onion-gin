@@ -1,0 +1,68 @@
+// ==============================================================================
+// Domain Layer: Product Entity
+// product.aura - Invariant-Enforcing Domain Model for Inventory & Catalog
+// ==============================================================================
+
+import { ErrInsufficientStock, ErrInvalidQuantity, ErrNegativePrice } from "../errors";
+
+export struct Product {
+  id: String,
+  sku: String,
+  name: String,
+  price: Float,
+  stock: Int,
+  active: Bool
+};
+
+export fn NewProduct(id: String, sku: String, name: String, price: Float, initialStock: Int): Result<Product, String> => {
+  if price < 0.0 {
+    return Err(ErrNegativePrice());
+  }
+  if initialStock < 0 {
+    return Err(ErrInvalidQuantity());
+  }
+
+  let prod: Product = {
+    id: id,
+    sku: sku,
+    name: name,
+    price: price,
+    stock: initialStock,
+    active: true
+  };
+  Ok(prod)
+}
+
+// Checks if requested quantity is available
+fn (p: *Product) CanReserve(quantity: Int): Bool => {
+  p.active && p.stock >= quantity && quantity > 0
+}
+
+// Reserves stock decrementing inventory atomically
+fn (p: *Product) ReserveStock(quantity: Int): Result<Unit, String> => {
+  if quantity <= 0 {
+    return Err(ErrInvalidQuantity());
+  }
+  if p.stock < quantity {
+    return Err(`${ErrInsufficientStock()}: available ${p.stock}, requested ${quantity}`);
+  }
+
+  p.stock = p.stock - quantity;
+  Ok(())
+}
+
+// Releases reserved stock returning it to inventory
+fn (p: *Product) ReleaseStock(quantity: Int): Unit => {
+  if quantity > 0 {
+    p.stock = p.stock + quantity;
+  }
+}
+
+// Restocks product inventory
+fn (p: *Product) Restock(quantity: Int): Result<Unit, String> => {
+  if quantity <= 0 {
+    return Err(ErrInvalidQuantity());
+  }
+  p.stock = p.stock + quantity;
+  Ok(())
+}

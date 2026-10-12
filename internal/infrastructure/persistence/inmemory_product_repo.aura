@@ -1,0 +1,108 @@
+// ==============================================================================
+// Infrastructure Layer: In-Memory Product Repository Adapter
+// inmemory_product_repo.aura - Implements IProductRepository Port Interface
+// ==============================================================================
+
+import { Product } from "../../domain/model/product";
+
+export struct InMemoryProductRepository {
+  __aura_type: String,
+  products: []Product
+};
+
+export fn NewInMemoryProductRepository(): InMemoryProductRepository => {
+  // Pre-seed catalog with realistic products
+  let initial: []Product = [
+    {
+      id: "prod_001",
+      sku: "AURA-BOOK-01",
+      name: "The Aura Programming Language Manual",
+      price: 39.99,
+      stock: 50,
+      active: true
+    },
+    {
+      id: "prod_002",
+      sku: "KBD-MECH-RGB",
+      name: "Split Ergonomic Mechanical Keyboard",
+      price: 189.50,
+      stock: 15,
+      active: true
+    },
+    {
+      id: "prod_003",
+      sku: "DISP-4K-ULTRA",
+      name: "34-inch Curved UltraWide Monitor",
+      price: 649.00,
+      stock: 8,
+      active: true
+    },
+    {
+      id: "prod_004",
+      sku: "MOUSE-WIRELESS",
+      name: "Precision Wireless Ergonomic Mouse",
+      price: 79.90,
+      stock: 25,
+      active: true
+    }
+  ];
+
+  { __aura_type: "InMemoryProductRepository", products: initial }
+}
+
+// Saves a new product
+fn (repo: *InMemoryProductRepository) Save(product: Product): Result<Unit, String> => {
+  for p in repo.products {
+    if p.id == product.id {
+      return Err(`Product with ID '${product.id}' already exists`);
+    }
+    if p.sku == product.sku {
+      return Err(`Product with SKU '${product.sku}' already exists`);
+    }
+  }
+  repo.products = append(repo.products, product);
+  Ok(())
+}
+
+// Retrieves product by ID
+fn (repo: *InMemoryProductRepository) FindById(id: String): Option<Product> => {
+  for p in repo.products {
+    if p.id == id {
+      return Some(p);
+    }
+  }
+  None
+}
+
+// Retrieves product by SKU
+fn (repo: *InMemoryProductRepository) FindBySku(sku: String): Option<Product> => {
+  for p in repo.products {
+    if p.sku == sku {
+      return Some(p);
+    }
+  }
+  None
+}
+
+// Lists all products
+fn (repo: *InMemoryProductRepository) FindAll(): []Product => {
+  repo.products
+}
+
+// Updates an existing product
+fn (repo: *InMemoryProductRepository) Update(product: Product): Result<Unit, String> => {
+  let mut foundIdx = -1;
+  for i, p in repo.products {
+    if p.id == product.id {
+      foundIdx = i;
+      break;
+    }
+  }
+
+  if foundIdx >= 0 {
+    repo.products[foundIdx] = product;
+    Ok(())
+  } else {
+    Err(`Product with ID '${product.id}' not found for update`)
+  }
+}

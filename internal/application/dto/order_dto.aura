@@ -1,0 +1,78 @@
+// ==============================================================================
+// Application Layer: Data Transfer Objects (DTOs)
+// order_dto.aura - Request & Response Payloads Decoupled from Domain Aggregates
+// ==============================================================================
+
+import { Order, OrderItem } from "../../domain/model/order";
+import { Product } from "../../domain/model/product";
+
+// Request DTO for individual item inside an order creation request
+export struct OrderItemInputDTO {
+  productId: String,
+  quantity: Int
+};
+
+// Request DTO for creating an order
+export struct CreateOrderRequestDTO {
+  customerId: String,
+  isVip: Bool,
+  items: []OrderItemInputDTO
+};
+
+// Response DTO formatting an Order for clients
+export struct OrderResponseDTO {
+  id: String,
+  customerId: String,
+  itemCount: Int,
+  items: []OrderItem,
+  subtotal: Float,
+  discount: Float,
+  tax: Float,
+  total: Float,
+  status: String,
+  createdAt: String
+};
+
+export fn ToOrderResponseDTO(o: Order): OrderResponseDTO => {
+  {
+    id: o.id,
+    customerId: o.customerId,
+    itemCount: len(o.items),
+    items: o.items,
+    subtotal: o.subtotal,
+    discount: o.discount,
+    tax: o.tax,
+    total: o.total,
+    status: o.status,
+    createdAt: o.createdAt
+  }
+}
+
+// Request DTO for creating a product
+export struct CreateProductRequestDTO {
+  sku: String,
+  name: String,
+  price: Float,
+  stock: Int
+};
+
+// Response DTO for product catalog
+export struct ProductResponseDTO {
+  id: String,
+  sku: String,
+  name: String,
+  price: Float,
+  stock: Int,
+  inStock: Bool
+};
+
+export fn ToProductResponseDTO(p: Product): ProductResponseDTO => {
+  {
+    id: p.id,
+    sku: p.sku,
+    name: p.name,
+    price: p.price,
+    stock: p.stock,
+    inStock: p.stock > 0
+  }
+}

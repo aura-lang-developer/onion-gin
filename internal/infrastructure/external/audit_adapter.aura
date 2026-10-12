@@ -1,0 +1,39 @@
+// ==============================================================================
+// Infrastructure Layer: Security Audit Adapter
+// audit_adapter.aura - Records System Audit Trails for Compliance & Monitoring
+// ==============================================================================
+
+export struct AuditEntry {
+  id: String,
+  action: String,
+  actor: String,
+  targetResource: String,
+  timestamp: String
+};
+
+export struct SecurityAuditAdapter {
+  __aura_type: String,
+  entries: []AuditEntry
+};
+
+export fn NewSecurityAuditAdapter(): SecurityAuditAdapter => {
+  let empty: []AuditEntry = [];
+  { __aura_type: "SecurityAuditAdapter", entries: empty }
+}
+
+fn (a: *SecurityAuditAdapter) LogAction(action: String, actor: String, targetResource: String): Unit => {
+  let id = `audit_${time.now()}`;
+  let entry: AuditEntry = {
+    id: id,
+    action: action,
+    actor: actor,
+    targetResource: targetResource,
+    timestamp: time.isoString()
+  };
+  a.entries = append(a.entries, entry);
+  println(`[AUDIT] 🔒 ${action} by '${actor}' on '${targetResource}'`);
+}
+
+fn (a: *SecurityAuditAdapter) GetEntries(): []AuditEntry => {
+  a.entries
+}
