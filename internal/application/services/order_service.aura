@@ -9,23 +9,24 @@ import { PricingService } from "../../domain/service/pricing_service";
 import { ErrOrderNotFound, ErrProductNotFound, ErrEmptyOrderItems } from "../../domain/errors";
 import { NewDomainEvent, EventOrderCreated, EventOrderConfirmed, EventOrderCancelled } from "../../domain/events";
 import { CreateOrderRequestDTO } from "../dto/order_dto";
+import { IOrderRepository, IProductRepository, INotificationService, IEventPublisher } from "../interfaces/ports";
 
 export struct OrderUseCase {
-  orderRepo: Any,
-  productRepo: Any,
+  orderRepo: IOrderRepository,
+  productRepo: IProductRepository,
   pricingService: PricingService,
-  notifier: Any,
-  eventPublisher: Any
+  notifier: INotificationService,
+  eventPublisher: IEventPublisher
 };
 
 let mut orderSeq: Int = 1000;
 
 export fn NewOrderUseCase(
-  orderRepo: Any,
-  productRepo: Any,
+  orderRepo: IOrderRepository,
+  productRepo: IProductRepository,
   pricingService: PricingService,
-  notifier: Any,
-  eventPublisher: Any
+  notifier: INotificationService,
+  eventPublisher: IEventPublisher
 ): OrderUseCase => {
   {
     orderRepo: orderRepo,

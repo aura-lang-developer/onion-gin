@@ -11,14 +11,14 @@ import { CSPEventBus } from "../../infrastructure/messaging/csp_event_bus";
 
 export struct SystemHttpHandler {
   config: AppConfig,
-  audit: Any,
-  bus: Any
+  audit: *SecurityAuditAdapter,
+  bus: *CSPEventBus
 };
 
 export fn NewSystemHttpHandler(
   config: AppConfig,
-  audit: Any,
-  bus: Any
+  audit: *SecurityAuditAdapter,
+  bus: *CSPEventBus
 ): SystemHttpHandler => {
   {
     config: config,

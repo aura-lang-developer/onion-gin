@@ -5,12 +5,13 @@
 
 import { Product, NewProduct } from "../../domain/model/product";
 import { ErrProductNotFound } from "../../domain/errors";
+import { IProductRepository } from "../interfaces/ports";
 
 export struct CatalogUseCase {
-  productRepo: Any
+  productRepo: IProductRepository
 };
 
-export fn NewCatalogUseCase(productRepo: Any): CatalogUseCase => {
+export fn NewCatalogUseCase(productRepo: IProductRepository): CatalogUseCase => {
   { productRepo: productRepo }
 }
 
